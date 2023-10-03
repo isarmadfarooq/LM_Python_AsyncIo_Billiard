@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV "/home/sarmadfarooq/Desktop/LM_Python_AsyncIo_Billiard/myenv"
+set -gx VIRTUAL_ENV "/home/sarmadfarooq/Desktop/LM_Python_AsyncIo_Billiard/ASYNCIO_BILLIAD/myenv"
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/bin" $PATH
