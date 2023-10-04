@@ -3,7 +3,7 @@ import asyncio
 import argparse
 import logging
 import json
-from billiard import Pool
+from multiprocessing import Pool
 
 logging.basicConfig(
     filename="suggestion_checker.log",
@@ -82,20 +82,22 @@ async def process_keyword(keyword):
     return result
 
 
-def process_keywords_parallel(keywords):
-    with Pool() as pool:
-        results = pool.map(process_keyword, keywords)
-    return results
+def process_keywords_parallel(keyword):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    return loop.run_until_complete(process_keyword(keyword))
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="Google Suggestion Checker")
     parser.add_argument("keywords", nargs="+", help="List of keywords to check")
     args = parser.parse_args()
 
-    loop = asyncio.get_event_loop()
-    results = loop.run_until_complete(
-        asyncio.gather(*[process_keyword(keyword) for keyword in args.keywords])
-    )
+    with Pool() as pool:
+        results = pool.map(process_keywords_parallel, args.keywords)
 
     print(json.dumps(results, indent=2))
+
+
+if __name__ == "__main__":
+    main()
