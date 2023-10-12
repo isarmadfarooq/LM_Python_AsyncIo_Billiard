@@ -3,47 +3,33 @@ import asyncio
 import argparse
 import logging
 import json
-from multiprocessing import Pool
+from billiard import Pool
 
-logging.basicConfig(
-    filename="suggestion_checker.log",
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s]: %(message)s",
-)
+logging.basicConfig(filename="suggestion.log", level=logging.INFO, format="%(message)s")
+logger = logging.getLogger(__name__)
 
 
-async def fetch_google_suggestions(keyword):
+async def fetch_suggestions_for_keyword(keyword, session):
     url = f"http://suggestqueries.google.com/complete/search?client=firefox&q={keyword}"
+    try:
+        async with session.get(url) as response:
+            if response.status == 200:
+                suggestions = await response.text()
+                suggestions = json.loads(suggestions)[1]
+                return (keyword, suggestions)
+            else:
+                raise Exception(f"Failed to fetch suggestions for {keyword}")
+    except Exception as e:
+        return (keyword, str(e))
 
+
+async def fetch_keywords(keywords):
     async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    data = await response.text()
-                    suggestions = json.loads(data)[1]
-                    return suggestions
-                else:
-                    raise Exception(f"Failed to fetch suggestions for {keyword}")
-        except Exception as e:
-            print(f"Error fetching suggestions for {keyword}: {e}")
-            return []
-
-
-def is_misspelled(keyword, suggestions):
-    if not suggestions:
-        return True
-    if keyword in suggestions:
-        return False
-    if len(keyword) <= 2:
-        return False
-    shortest_suggestions = min(suggestions, key=len)
-    key_words = keyword.split()
-    suggestion_words = shortest_suggestions.split()
-    if len(key_words) < len(suggestion_words):
-        return key_words == suggestion_words[: len(key_words)]
-    if len(key_words) > len(suggestion_words):
-        return True
-    return True
+        tasks = [
+            fetch_suggestions_for_keyword(keyword, session) for keyword in keywords
+        ]
+        results = await asyncio.gather(*tasks)
+        return results
 
 
 def get_correct_keyword(suggestions):
@@ -53,50 +39,47 @@ def get_correct_keyword(suggestions):
         return ""
 
 
-async def process_suggestion(keyword):
-    try:
-        suggestions = await fetch_google_suggestions(keyword)
-    except Exception as e:
-        logging.error(f"Error fetching suggestions for {keyword}: {e}")
-        suggestions = []
-    return suggestions
-
-
-async def process_keyword(keyword):
-    suggestions = await process_suggestion(keyword)
-    misspelled = is_misspelled(keyword, suggestions)
+def is_misspelled(keyword, suggestions):
+    misspelled = True
     correct_keyword = None
 
-    if misspelled:
+    if suggestions:
         correct_keyword = get_correct_keyword(suggestions)
+        if keyword in suggestions or len(keyword) <= 2:
+            misspelled = False
+            correct_keyword = keyword
 
-    reason = None if misspelled else f"Corrected to: {correct_keyword}"
+        if len(keyword) > len(correct_keyword):
+            misspelled = True
+        elif len(keyword) < len(correct_keyword):
+            misspelled = False
 
     result = {
         "keyword": keyword,
         "suggestions": suggestions,
         "is_misspelled": misspelled,
         "correct_keyword": correct_keyword,
-        "reason": reason,
+        "reason": None,
     }
     return result
 
 
-def process_keywords_parallel(keyword):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    return loop.run_until_complete(process_keyword(keyword))
+def process_keywords(keywords):
+    loop = asyncio.get_event_loop()
+    results = loop.run_until_complete(fetch_keywords(keywords))
+    with Pool() as pool:
+        parsed_results = pool.starmap(is_misspelled, results)
+
+    result_json = json.dumps(parsed_results, indent=4)
+
+    logger.info(result_json)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Google Suggestion Checker")
     parser.add_argument("keywords", nargs="+", help="List of keywords to check")
     args = parser.parse_args()
-
-    with Pool() as pool:
-        results = pool.map(process_keywords_parallel, args.keywords)
-
-    print(json.dumps(results, indent=2))
+    process_keywords(args.keywords)
 
 
 if __name__ == "__main__":
